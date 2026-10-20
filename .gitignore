@@ -1,0 +1,19 @@
+# Customer-level data stays local; it contains identifiers and financial fields.
+European_Bank.csv
+
+# Python environments and generated files
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Streamlit secrets and local configuration
+.streamlit/secrets.toml
+.env
+.env.*
+!.env.example
+
+# Editor and operating-system files
+.DS_Store
+Thumbs.db
+.vscode/
