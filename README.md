@@ -19,11 +19,11 @@ and dataset integration are planned for later development milestones.
    streamlit run app.py
    ```
 
-## Data
+## Dataset
 
-The customer-level `European_Bank.csv` file is intentionally excluded from Git.
-It contains customer identifiers and financial fields. Keep the source data in
-the project folder locally; the dashboard will connect to it in a later
+`European_Bank.csv` is included in this repository for the project analysis. It
+contains customer-level identifiers, demographic and financial fields, and the
+churn indicator. Dataset integration into the dashboard is planned for a later
 milestone.
 
 ## Current scope

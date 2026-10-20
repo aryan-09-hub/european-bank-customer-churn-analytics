@@ -1,6 +1,3 @@
-# Customer-level data stays local; it contains identifiers and financial fields.
-European_Bank.csv
-
 # Python environments and generated files
 .venv/
 venv/
