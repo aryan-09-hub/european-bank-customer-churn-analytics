@@ -1,8 +1,9 @@
 # Customer Segmentation & Churn Pattern Analytics
 
 A Streamlit project for exploring customer churn patterns in European banking.
-The current version establishes the dashboard layout and navigation. Analytics
-and dataset integration are planned for later development milestones.
+The current version validates the supplied customer dataset and shows the
+customer total, churn rate, and retained and churned counts. Additional analysis
+views are planned for later development milestones.
 
 ## Run locally
 
@@ -29,6 +30,9 @@ milestone.
 ## Current scope
 
 - Dark banking analytics dashboard foundation
-- Overview page with clearly marked, empty KPI and chart placeholders
+- Loads the local `European_Bank.csv` file and validates its required schema,
+  unique customer IDs, and binary engagement and churn fields
+- Overview KPIs for total customers, churn rate, churned customers, and retained
+  customers
+- Clearly labeled placeholders for future charts and segment analysis
 - Navigation placeholders for future analysis sections
-- No customer metrics are calculated or displayed yet

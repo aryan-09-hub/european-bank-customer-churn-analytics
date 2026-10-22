@@ -1,5 +1,7 @@
-import streamlit as st
+from pathlib import Path
 
+import pandas as pd
+import streamlit as st
 
 st.set_page_config(
     page_title="RetainIQ | European Banking",
@@ -7,6 +9,74 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+
+DATA_FILE = Path(__file__).resolve().parent / "European_Bank.csv"
+REQUIRED_COLUMNS = {
+    "CustomerId",
+    "Surname",
+    "CreditScore",
+    "Geography",
+    "Gender",
+    "Age",
+    "Tenure",
+    "Balance",
+    "NumOfProducts",
+    "HasCrCard",
+    "IsActiveMember",
+    "EstimatedSalary",
+    "Exited",
+}
+BINARY_COLUMNS = ("HasCrCard", "IsActiveMember", "Exited")
+
+
+class DataValidationError(ValueError):
+    """Raised when the customer file cannot safely support the overview KPIs."""
+
+
+@st.cache_data(show_spinner="Loading and validating customer data…")
+def load_customer_data(path: str) -> pd.DataFrame:
+    customers = pd.read_csv(path)
+    missing_columns = sorted(REQUIRED_COLUMNS.difference(customers.columns))
+    if missing_columns:
+        raise DataValidationError(
+            "The customer file is missing required columns: " + ", ".join(missing_columns)
+        )
+    if customers.empty:
+        raise DataValidationError("The customer file contains no records.")
+    if customers["CustomerId"].isna().any():
+        raise DataValidationError("CustomerId contains blank values.")
+    duplicate_ids = int(customers["CustomerId"].duplicated().sum())
+    if duplicate_ids:
+        raise DataValidationError(f"CustomerId contains {duplicate_ids:,} duplicate records.")
+
+    for column in BINARY_COLUMNS:
+        values = pd.to_numeric(customers[column], errors="coerce")
+        invalid = values.isna() | ~values.isin((0, 1))
+        if invalid.any():
+            raise DataValidationError(
+                f"{column} must contain only 0 or 1; found {int(invalid.sum()):,} invalid records."
+            )
+        customers[column] = values.astype("int8")
+
+    return customers
+
+
+try:
+    customer_data = load_customer_data(str(DATA_FILE))
+    data_error = None
+except FileNotFoundError:
+    customer_data = None
+    data_error = f"Could not find {DATA_FILE.name} beside app.py."
+except (
+    OSError,
+    UnicodeDecodeError,
+    pd.errors.EmptyDataError,
+    pd.errors.ParserError,
+    DataValidationError,
+) as error:
+    customer_data = None
+    data_error = f"Could not use {DATA_FILE.name}: {error}"
 
 NAVY = "#0b1326"
 PANEL = "#171f33"
@@ -68,7 +138,12 @@ with st.sidebar:
         label_visibility="collapsed",
     )
     st.divider()
-    st.markdown('<span class="status"><span class="status-dot"></span> Data not connected</span>', unsafe_allow_html=True)
+    sidebar_status = "Dataset validated" if customer_data is not None else "Dataset unavailable"
+    sidebar_status_color = GREEN if customer_data is not None else "#f6b94a"
+    st.markdown(
+        f'<span class="status"><span class="status-dot" style="background:{sidebar_status_color}"></span>{sidebar_status}</span>',
+        unsafe_allow_html=True,
+    )
     st.markdown("\n")
     st.caption("Customer Segmentation & Churn Pattern Analytics")
 
@@ -93,10 +168,24 @@ with head_left:
     st.markdown('<div class="subtle">A clear view of customer retention across European markets.</div>', unsafe_allow_html=True)
 with head_right:
     st.markdown("<div style='height:1.5rem'></div>", unsafe_allow_html=True)
-    st.markdown('<div style="text-align:right"><span class="status"><span class="status-dot"></span> Awaiting data connection</span></div>', unsafe_allow_html=True)
+    if customer_data is not None:
+        st.markdown(
+            f'<div style="text-align:right"><span class="status"><span class="status-dot" style="background:{GREEN}"></span>Source validated · {len(customer_data):,} customers</span></div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            '<div style="text-align:right"><span class="status"><span class="status-dot" style="background:#f6b94a"></span>Dataset unavailable</span></div>',
+            unsafe_allow_html=True,
+        )
 
 st.markdown("\n")
-st.markdown('<div class="eyebrow">Filters · preview</div>', unsafe_allow_html=True)
+if customer_data is None:
+    st.error(data_error, icon="⚠️")
+else:
+    st.caption(f"Source: {DATA_FILE.name} · one row per unique customer · filters and charts arrive in later milestones.")
+
+st.markdown('<div class="eyebrow">Filters · later milestone</div>', unsafe_allow_html=True)
 filter_cols = st.columns([1.25, 1.25, 1.25, 1.1, 1.1])
 with filter_cols[0]:
     st.selectbox("Geography", ["All countries", "France", "Germany", "Spain"], disabled=True)
@@ -113,11 +202,22 @@ with filter_cols[4]:
 st.markdown("\n")
 metric_cols = st.columns(4)
 metrics = [
-    ("TOTAL CUSTOMERS", "—", "Connect the dataset to view customer count", BLUE),
-    ("OVERALL CHURN RATE", "—", "Calculated from the Exited field", ROSE),
-    ("CHURNED CUSTOMERS", "—", "Customer records where Exited = 1", ROSE),
-    ("RETAINED CUSTOMERS", "—", "Customer records where Exited = 0", GREEN),
+    ("TOTAL CUSTOMERS", "—", "Unavailable until the data validates", BLUE),
+    ("OVERALL CHURN RATE", "—", "Unavailable until the data validates", ROSE),
+    ("CHURNED CUSTOMERS", "—", "Unavailable until the data validates", ROSE),
+    ("RETAINED CUSTOMERS", "—", "Unavailable until the data validates", GREEN),
 ]
+if customer_data is not None:
+    total_customers = len(customer_data)
+    churned_customers = int(customer_data["Exited"].eq(1).sum())
+    retained_customers = total_customers - churned_customers
+    churn_rate = churned_customers / total_customers
+    metrics = [
+        ("TOTAL CUSTOMERS", f"{total_customers:,}", "Unique customer records", BLUE),
+        ("OVERALL CHURN RATE", f"{churn_rate:.1%}", "Churned ÷ total customers", ROSE),
+        ("CHURNED CUSTOMERS", f"{churned_customers:,}", "Exited = 1", ROSE),
+        ("RETAINED CUSTOMERS", f"{retained_customers:,}", "Exited = 0", GREEN),
+    ]
 for col, (label, value, note, accent) in zip(metric_cols, metrics):
     with col:
         st.markdown(
@@ -128,12 +228,12 @@ for col, (label, value, note, accent) in zip(metric_cols, metrics):
 st.markdown("\n")
 chart_left, chart_right = st.columns([1.15, 1])
 with chart_left:
-    st.markdown('<div class="panel"><div class="panel-title">Churn by geography</div><div class="panel-copy">Compare customer exit rates across France, Germany, and Spain.</div><div class="empty"><div class="empty-icon">▥</div><strong>Chart placeholder</strong><span>Geography analysis will appear when the dataset is connected.</span></div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="panel"><div class="panel-title">Churn by geography</div><div class="panel-copy">Compare customer exit rates across France, Germany, and Spain.</div><div class="empty"><div class="empty-icon">▥</div><strong>Analysis planned for a later milestone</strong><span>The dataset is loaded; geography breakdowns are not part of this phase.</span></div></div>', unsafe_allow_html=True)
 with chart_right:
-    st.markdown('<div class="panel"><div class="panel-title">Customer status mix</div><div class="panel-copy">Retained and churned customers across the selected population.</div><div class="empty"><div class="empty-icon">◉</div><strong>Chart placeholder</strong><span>Customer counts and proportions are not loaded yet.</span></div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="panel"><div class="panel-title">Customer status mix</div><div class="panel-copy">Retained and churned customers across the selected population.</div><div class="empty"><div class="empty-icon">◉</div><strong>Analysis planned for a later milestone</strong><span>The headline status counts above are live; the chart comes later.</span></div></div>', unsafe_allow_html=True)
 
 st.markdown("\n")
-st.markdown('<div class="panel"><div class="panel-title">Segment snapshot</div><div class="panel-copy">A preview of the segment comparison table.</div><div class="table-placeholder">Segment data will be shown here after connecting and validating the customer dataset.</div></div>', unsafe_allow_html=True)
+st.markdown('<div class="panel"><div class="panel-title">Segment snapshot</div><div class="panel-copy">A preview of the segment comparison table.</div><div class="table-placeholder">Segment comparisons are planned for a later milestone.</div></div>', unsafe_allow_html=True)
 
 st.markdown("\n")
-st.caption("Overview layout preview · No analytics or sample figures are shown in this milestone.")
+st.caption("Customer counts and churn rate use the validated source labels; filters and breakdowns are not active yet.")
