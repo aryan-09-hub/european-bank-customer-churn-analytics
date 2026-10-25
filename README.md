@@ -24,8 +24,8 @@ views are planned for later development milestones.
 
 `European_Bank.csv` is included in this repository for the project analysis. It
 contains customer-level identifiers, demographic and financial fields, and the
-churn indicator. Dataset integration into the dashboard is planned for a later
-milestone.
+churn indicator. The app validates the required schema and uses these records
+for the Overview and Geography & Demographics pages.
 
 ## Current scope
 
@@ -34,5 +34,7 @@ milestone.
   unique customer IDs, and binary engagement and churn fields
 - Overview KPIs for total customers, churn rate, churned customers, and retained
   customers
+- Geography and demographics page with country, age-group, gender, and
+  country-by-age churn comparisons, including customer counts
 - Clearly labeled placeholders for future charts and segment analysis
 - Navigation placeholders for future analysis sections

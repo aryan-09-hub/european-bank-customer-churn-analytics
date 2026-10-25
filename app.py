@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pandas as pd
+import plotly.express as px
 import streamlit as st
 
 st.set_page_config(
@@ -60,6 +61,30 @@ def load_customer_data(path: str) -> pd.DataFrame:
         customers[column] = values.astype("int8")
 
     return customers
+
+
+def summarize_churn(data: pd.DataFrame, dimension: str) -> pd.DataFrame:
+    """Return customer counts and churn rates for one analysis dimension."""
+    return (
+        data.groupby(dimension, observed=False, dropna=False)["Exited"]
+        .agg(Customers="size", Churned="sum", Churn_Rate="mean")
+        .reset_index()
+    )
+
+
+def style_chart(figure, height: int = 330):
+    figure.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"family": "Inter, sans-serif", "color": TEXT},
+        margin={"l": 12, "r": 12, "t": 24, "b": 12},
+        height=height,
+        showlegend=False,
+    )
+    figure.update_yaxes(tickformat=".0%", gridcolor=STROKE, zeroline=False)
+    figure.update_xaxes(gridcolor=STROKE, zeroline=False)
+    return figure
 
 
 try:
@@ -147,9 +172,118 @@ with st.sidebar:
     st.markdown("\n")
     st.caption("Customer Segmentation & Churn Pattern Analytics")
 
+if section == "Geography & demographics":
+    st.markdown('<div class="eyebrow">Customer analysis · geography & demographics</div>', unsafe_allow_html=True)
+    st.title("Geography & demographics")
+    st.markdown('<div class="subtle">Compare observed churn across countries, age groups, and gender.</div>', unsafe_allow_html=True)
+    if customer_data is None:
+        st.error(data_error, icon="⚠️")
+        st.stop()
+
+    analysis_data = customer_data.copy()
+    analysis_data["Age group"] = pd.cut(
+        analysis_data["Age"],
+        bins=[-float("inf"), 29, 45, 59, float("inf")],
+        labels=["Under 30", "30–45", "46–59", "60+"],
+    )
+    country_summary = summarize_churn(analysis_data, "Geography").sort_values("Churn_Rate", ascending=False)
+    age_summary = summarize_churn(analysis_data, "Age group")
+    gender_summary = summarize_churn(analysis_data, "Gender").sort_values("Churn_Rate", ascending=False)
+    country_age = analysis_data.pivot_table(
+        index="Age group", columns="Geography", values="Exited", aggfunc="mean", observed=False
+    )
+
+    highest_country = country_summary.iloc[0]
+    highest_age = age_summary.loc[age_summary["Churn_Rate"].idxmax()]
+    highest_gender = gender_summary.iloc[0]
+    summary_cols = st.columns(3)
+    for col, (label, value, detail, accent) in zip(
+        summary_cols,
+        [
+            ("HIGHEST COUNTRY RATE", f"{highest_country['Churn_Rate']:.1%}", f"{highest_country['Geography']} · {int(highest_country['Customers']):,} customers", ROSE),
+            ("HIGHEST AGE-GROUP RATE", f"{highest_age['Churn_Rate']:.1%}", f"{highest_age['Age group']} · {int(highest_age['Customers']):,} customers", BLUE),
+            ("GENDER WITH HIGHER RATE", f"{highest_gender['Churn_Rate']:.1%}", f"{highest_gender['Gender']} · {int(highest_gender['Customers']):,} customers", GREEN),
+        ],
+    ):
+        with col:
+            st.markdown(
+                f'<div class="kpi"><div class="kpi-label">{label}</div><div class="kpi-value" style="color:{accent}">{value}</div><div class="kpi-note">{detail}</div></div>',
+                unsafe_allow_html=True,
+            )
+
+    st.markdown("\n")
+    left, right = st.columns(2)
+    with left:
+        st.subheader("Churn by country")
+        st.caption("Rate bars include customer and churned counts on hover.")
+        fig = px.bar(
+            country_summary.sort_values("Geography"), x="Geography", y="Churn_Rate",
+            color="Churn_Rate", color_continuous_scale=["#70a5ff", "#ff7185"],
+            custom_data=["Customers", "Churned"], labels={"Churn_Rate": "Churn rate", "Geography": "Country"},
+        )
+        fig.update_traces(hovertemplate="%{x}<br>Churn rate: %{y:.1%}<br>Customers: %{customdata[0]:,}<br>Churned: %{customdata[1]:,}<extra></extra>")
+        style_chart(fig).update_layout(coloraxis_showscale=False)
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        st.dataframe(
+            country_summary.rename(columns={"Geography": "Country", "Churn_Rate": "Churn rate"})
+            .assign(**{"Churn rate": lambda table: table["Churn rate"].map(lambda rate: f"{rate:.1%}")})
+            [["Country", "Customers", "Churned", "Churn rate"]],
+            hide_index=True, use_container_width=True,
+        )
+    with right:
+        st.subheader("Churn by age group")
+        st.caption("Age bands follow the project definitions: under 30, 30–45, 46–59, and 60+.")
+        fig = px.bar(
+            age_summary, x="Age group", y="Churn_Rate", color="Churn_Rate",
+            color_continuous_scale=["#70a5ff", "#ff7185"], custom_data=["Customers", "Churned"],
+            labels={"Churn_Rate": "Churn rate", "Age group": "Age group"},
+        )
+        fig.update_traces(hovertemplate="%{x}<br>Churn rate: %{y:.1%}<br>Customers: %{customdata[0]:,}<br>Churned: %{customdata[1]:,}<extra></extra>")
+        style_chart(fig).update_layout(coloraxis_showscale=False)
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        st.dataframe(
+            age_summary.rename(columns={"Churn_Rate": "Churn rate"})
+            .assign(**{"Churn rate": lambda table: table["Churn rate"].map(lambda rate: f"{rate:.1%}")})
+            [["Age group", "Customers", "Churned", "Churn rate"]],
+            hide_index=True, use_container_width=True,
+        )
+
+    st.markdown("\n")
+    left, right = st.columns(2)
+    with left:
+        st.subheader("Churn by gender")
+        fig = px.bar(
+            gender_summary, x="Gender", y="Churn_Rate", color="Churn_Rate",
+            color_continuous_scale=["#70a5ff", "#ff7185"], custom_data=["Customers", "Churned"],
+            labels={"Churn_Rate": "Churn rate", "Gender": "Gender"},
+        )
+        fig.update_traces(hovertemplate="%{x}<br>Churn rate: %{y:.1%}<br>Customers: %{customdata[0]:,}<br>Churned: %{customdata[1]:,}<extra></extra>")
+        style_chart(fig).update_layout(coloraxis_showscale=False)
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        st.dataframe(
+            gender_summary.rename(columns={"Churn_Rate": "Churn rate"})
+            .assign(**{"Churn rate": lambda table: table["Churn rate"].map(lambda rate: f"{rate:.1%}")})
+            [["Gender", "Customers", "Churned", "Churn rate"]],
+            hide_index=True, use_container_width=True,
+        )
+    with right:
+        st.subheader("Country × age-group churn")
+        st.caption("Each cell shows the churn rate for customers in that country and age band.")
+        fig = px.imshow(
+            country_age * 100, text_auto=".1f", aspect="auto",
+            color_continuous_scale=["#152749", "#70a5ff", "#ff7185"],
+            labels={"x": "Country", "y": "Age group", "color": "Churn rate (%)"},
+        )
+        fig.update_traces(hovertemplate="Age group: %{y}<br>Country: %{x}<br>Churn rate: %{z:.1f}%<extra></extra>")
+        fig.update_layout(coloraxis_colorbar={"ticksuffix": "%"})
+        style_chart(fig, height=380)
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+    st.caption("Rates are churned customers divided by customers in each group. These are descriptive comparisons and do not establish causation.")
+    st.stop()
+
 if section != "Overview":
     upcoming = {
-        "Geography & demographics": "Country, age, and gender comparisons will be added in a later project milestone.",
         "Customer segments": "Segment definitions and comparisons will be added in a later project milestone.",
         "High-value explorer": "High-value customer criteria and analysis will be added in a later project milestone.",
     }
