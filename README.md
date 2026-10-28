@@ -36,5 +36,9 @@ for the Overview and Geography & Demographics pages.
   customers
 - Geography and demographics page with country, age-group, gender, and
   country-by-age churn comparisons, including customer counts
-- Clearly labeled placeholders for future charts and segment analysis
+- Customer segmentation page covering age, credit score, tenure, balance,
+  product count, and engagement, with counts, churn rates, and churn contribution
+- Credit-score bands use dataset tertiles; positive balances split at their
+  dataset median. The dashboard documents the resulting thresholds.
+- Clearly labeled placeholders for future high-value analysis
 - Navigation placeholders for future analysis sections

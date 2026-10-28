@@ -87,6 +87,60 @@ def style_chart(figure, height: int = 330):
     return figure
 
 
+def build_segmented_data(data: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, str]]:
+    """Add documented, analysis-only segment labels derived from the source data."""
+    segmented = data.copy()
+    segmented["Age group"] = pd.cut(
+        segmented["Age"],
+        bins=[-float("inf"), 29, 45, 59, float("inf")],
+        labels=["Under 30", "30–45", "46–59", "60+"],
+    )
+
+    credit_low = int(data["CreditScore"].quantile(1 / 3))
+    credit_high = int(data["CreditScore"].quantile(2 / 3))
+    segmented["Credit score"] = pd.cut(
+        segmented["CreditScore"],
+        bins=[-float("inf"), credit_low, credit_high, float("inf")],
+        labels=["Low", "Medium", "High"],
+    )
+
+    segmented["Tenure group"] = pd.cut(
+        segmented["Tenure"],
+        bins=[-float("inf"), 2, 6, float("inf")],
+        labels=["New (0–2 years)", "Mid-term (3–6 years)", "Long-term (7+ years)"],
+    )
+
+    positive_balance_median = data.loc[data["Balance"].gt(0), "Balance"].median()
+    segmented["Balance group"] = pd.Series("Zero balance", index=data.index, dtype="object")
+    positive_balance = data["Balance"].gt(0)
+    segmented.loc[positive_balance & data["Balance"].le(positive_balance_median), "Balance group"] = "Low positive balance"
+    segmented.loc[positive_balance & data["Balance"].gt(positive_balance_median), "Balance group"] = "High positive balance"
+
+    segmented["Product count"] = segmented["NumOfProducts"].map(lambda value: f"{value} product{'s' if value != 1 else ''}")
+    segmented["Activity"] = segmented["IsActiveMember"].map({1: "Active", 0: "Inactive"})
+
+    notes = {
+        "Age group": "Age bands use the project cutoffs: under 30, 30–45, 46–59, and 60+.",
+        "Credit score": f"Relative bands based on this dataset’s tertiles: Low ≤ {credit_low}; Medium {credit_low + 1}–{credit_high}; High > {credit_high}. These are descriptive groupings, not lending thresholds.",
+        "Tenure group": "New = 0–2 years; Mid-term = 3–6 years; Long-term = 7 or more years.",
+        "Balance group": f"Zero balance = 0; positive balances split at the dataset median of {positive_balance_median:,.2f} (lower band includes the median). Units are as recorded in the source.",
+        "Product count": "Segments show the number of products recorded for each customer.",
+        "Activity": "Active and inactive labels come from IsActiveMember (1 = active, 0 = inactive).",
+    }
+    return segmented, notes
+
+
+def summarize_segment_churn(data: pd.DataFrame, dimension: str) -> pd.DataFrame:
+    summary = summarize_churn(data, dimension).rename(
+        columns={dimension: "Segment", "Churn_Rate": "Churn rate"}
+    )
+    total_churned = int(data["Exited"].sum())
+    summary["Churn contribution"] = (
+        summary["Churned"] / total_churned if total_churned else 0
+    )
+    return summary
+
+
 try:
     customer_data = load_customer_data(str(DATA_FILE))
     data_error = None
@@ -282,9 +336,62 @@ if section == "Geography & demographics":
     st.caption("Rates are churned customers divided by customers in each group. These are descriptive comparisons and do not establish causation.")
     st.stop()
 
+if section == "Customer segments":
+    st.markdown('<div class="eyebrow">Customer analysis · segmentation</div>', unsafe_allow_html=True)
+    st.title("Customer segments")
+    st.markdown('<div class="subtle">Compare churn rates and churn contribution across six customer-profile dimensions.</div>', unsafe_allow_html=True)
+    if customer_data is None:
+        st.error(data_error, icon="⚠️")
+        st.stop()
+
+    segmented_data, segment_notes = build_segmented_data(customer_data)
+    st.caption("Churn contribution means a segment’s share of all churned customers. It is affected by both segment size and churn rate.")
+    segment_dimensions = [
+        ("Age", "Age group"),
+        ("Credit score", "Credit score"),
+        ("Tenure", "Tenure group"),
+        ("Balance", "Balance group"),
+        ("Products", "Product count"),
+        ("Engagement", "Activity"),
+    ]
+    segment_tabs = st.tabs([label for label, _ in segment_dimensions])
+    for tab, (label, dimension) in zip(segment_tabs, segment_dimensions):
+        with tab:
+            summary = summarize_segment_churn(segmented_data, dimension)
+            st.caption(segment_notes[dimension])
+            table_summary = summary.assign(
+                **{
+                    "Churn rate": summary["Churn rate"].map(lambda rate: f"{rate:.1%}"),
+                    "Churn contribution": summary["Churn contribution"].map(lambda share: f"{share:.1%}"),
+                }
+            )
+            st.dataframe(
+                table_summary[["Segment", "Customers", "Churned", "Churn rate", "Churn contribution"]],
+                hide_index=True,
+                use_container_width=True,
+            )
+            figure = px.bar(
+                summary,
+                x="Segment",
+                y="Churn rate",
+                color="Churn rate",
+                color_continuous_scale=["#70a5ff", "#ff7185"],
+                custom_data=["Customers", "Churned", "Churn contribution"],
+                labels={"Segment": label, "Churn rate": "Churn rate"},
+            )
+            figure.update_traces(
+                hovertemplate=(
+                    "%{x}<br>Churn rate: %{y:.1%}<br>Customers: %{customdata[0]:,}"
+                    "<br>Churned: %{customdata[1]:,}<br>Share of all churn: %{customdata[2]:.1%}<extra></extra>"
+                )
+            )
+            style_chart(figure).update_layout(coloraxis_showscale=False)
+            st.plotly_chart(figure, use_container_width=True, config={"displayModeBar": False})
+    st.caption("Segment totals are descriptive of this dataset and do not establish that a profile causes churn.")
+    st.stop()
+
 if section != "Overview":
     upcoming = {
-        "Customer segments": "Segment definitions and comparisons will be added in a later project milestone.",
         "High-value explorer": "High-value customer criteria and analysis will be added in a later project milestone.",
     }
     st.markdown('<div class="eyebrow">Workspace · in progress</div>', unsafe_allow_html=True)
