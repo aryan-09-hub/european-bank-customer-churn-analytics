@@ -390,6 +390,167 @@ if section == "Customer segments":
     st.caption("Segment totals are descriptive of this dataset and do not establish that a profile causes churn.")
     st.stop()
 
+if section == "High-value explorer":
+    st.markdown('<div class="eyebrow">Customer analysis · high-value explorer</div>', unsafe_allow_html=True)
+    st.title("High-value explorer")
+    st.markdown('<div class="subtle">Explore churn and financial profiles among customers with higher positive balances.</div>', unsafe_allow_html=True)
+    if customer_data is None:
+        st.error(data_error, icon="⚠️")
+        st.stop()
+
+    positive_balances = customer_data.loc[customer_data["Balance"].gt(0), "Balance"]
+    high_value_threshold = float(positive_balances.quantile(0.75))
+    max_balance = float(customer_data["Balance"].max())
+    balance_step = max((max_balance - high_value_threshold) / 100, 1.0)
+    high_value_data = customer_data.loc[customer_data["Balance"].ge(high_value_threshold)].copy()
+    high_value_data["Age group"] = pd.cut(
+        high_value_data["Age"],
+        bins=[-float("inf"), 29, 45, 59, float("inf")],
+        labels=["Under 30", "30–45", "46–59", "60+"],
+    )
+    high_value_data["Activity"] = high_value_data["IsActiveMember"].map({1: "Active", 0: "Inactive"})
+    high_value_data["Exit status"] = high_value_data["Exited"].map({0: "Retained", 1: "Churned"})
+
+    st.caption(
+        f"High-value proxy: positive balance at or above the 75th percentile of positive balances "
+        f"({high_value_threshold:,.2f} source units). This is an analysis definition, not a revenue or profitability measure."
+    )
+    country_options = sorted(high_value_data["Geography"].dropna().unique().tolist())
+    age_options = ["Under 30", "30–45", "46–59", "60+"]
+    filter_row = st.columns(2)
+    with filter_row[0]:
+        selected_countries = st.multiselect(
+            "Geography", country_options, default=country_options, key="high_value_geography"
+        )
+    with filter_row[1]:
+        selected_ages = st.multiselect(
+            "Age group", age_options, default=age_options, key="high_value_age"
+        )
+    balance_range = st.slider(
+        "Balance range (source units)",
+        min_value=high_value_threshold,
+        max_value=max_balance,
+        value=(high_value_threshold, max_balance),
+        step=balance_step,
+        format="%.0f",
+        key="high_value_balance_range",
+    )
+    activity_filter = st.selectbox(
+        "Engagement", ["All members", "Active", "Inactive"], key="high_value_activity"
+    )
+
+    in_scope = (
+        high_value_data["Geography"].isin(selected_countries)
+        & high_value_data["Age group"].isin(selected_ages)
+        & high_value_data["Balance"].between(balance_range[0], balance_range[1])
+    )
+    if activity_filter != "All members":
+        in_scope &= high_value_data["Activity"].eq(activity_filter)
+    filtered_high_value = high_value_data.loc[in_scope].copy()
+
+    st.markdown("\n")
+    if filtered_high_value.empty:
+        st.info("No high-value customers match these filters. Adjust a filter to see the comparison.")
+        st.stop()
+
+    total_high_value = len(filtered_high_value)
+    churned_high_value = filtered_high_value.loc[filtered_high_value["Exited"].eq(1)]
+    churn_rate_high_value = len(churned_high_value) / total_high_value
+    churned_balance = float(churned_high_value["Balance"].sum())
+    kpi_values = [
+        ("HIGH-VALUE CUSTOMERS", f"{total_high_value:,}", "Customers in the filtered cohort", BLUE),
+        ("CHURN RATE", f"{churn_rate_high_value:.1%}", "Churned ÷ filtered cohort", ROSE),
+        ("CHURNED CUSTOMERS", f"{len(churned_high_value):,}", "Exited = 1", ROSE),
+        ("BALANCE ON CHURNED ACCOUNTS", f"{churned_balance:,.0f}", "Source units; not revenue", GREEN),
+    ]
+    for column, (label, value, note, accent) in zip(st.columns(4), kpi_values):
+        with column:
+            st.markdown(
+                f'<div class="kpi"><div class="kpi-label">{label}</div><div class="kpi-value" style="color:{accent}">{value}</div><div class="kpi-note">{note}</div></div>',
+                unsafe_allow_html=True,
+            )
+
+    st.markdown("\n")
+    st.subheader("High-value customers by country")
+    country_summary = (
+        filtered_high_value.groupby("Geography", observed=True)
+        .agg(Customers=("CustomerId", "size"), Churned=("Exited", "sum"))
+        .reset_index()
+        .rename(columns={"Geography": "Country"})
+    )
+    country_summary["Churn rate"] = country_summary["Churned"] / country_summary["Customers"]
+    balance_by_country = (
+        churned_high_value.groupby("Geography", observed=True)["Balance"].sum()
+        .rename("Balance on churned accounts")
+    )
+    country_summary = country_summary.join(balance_by_country, on="Country")
+    country_summary["Balance on churned accounts"] = country_summary["Balance on churned accounts"].fillna(0)
+    display_country = country_summary.assign(
+        **{
+            "Churn rate": country_summary["Churn rate"].map(lambda rate: f"{rate:.1%}"),
+            "Balance on churned accounts": country_summary["Balance on churned accounts"].map(lambda value: f"{value:,.0f}"),
+        }
+    )
+    st.dataframe(
+        display_country[["Country", "Customers", "Churned", "Churn rate", "Balance on churned accounts"]],
+        hide_index=True,
+        use_container_width=True,
+    )
+
+    st.markdown("\n")
+    left, right = st.columns(2)
+    with left:
+        st.subheader("Balance by customer status")
+        st.caption("Distribution within the filtered high-value cohort.")
+        balance_figure = px.box(
+            filtered_high_value,
+            x="Exit status",
+            y="Balance",
+            color="Exit status",
+            color_discrete_map={"Retained": GREEN, "Churned": ROSE},
+            category_orders={"Exit status": ["Retained", "Churned"]},
+            labels={"Exit status": "Customer status", "Balance": "Balance (source units)"},
+        )
+        balance_figure.update_layout(showlegend=False)
+        style_chart(balance_figure).update_yaxes(tickformat=",.0f")
+        st.plotly_chart(balance_figure, use_container_width=True, config={"displayModeBar": False})
+    with right:
+        st.subheader("Estimated salary by customer status")
+        st.caption("Dataset salary estimates; they are not bank revenue.")
+        salary_figure = px.box(
+            filtered_high_value,
+            x="Exit status",
+            y="EstimatedSalary",
+            color="Exit status",
+            color_discrete_map={"Retained": GREEN, "Churned": ROSE},
+            category_orders={"Exit status": ["Retained", "Churned"]},
+            labels={"Exit status": "Customer status", "EstimatedSalary": "Estimated salary (source units)"},
+        )
+        salary_figure.update_layout(showlegend=False)
+        style_chart(salary_figure).update_yaxes(tickformat=",.0f")
+        st.plotly_chart(salary_figure, use_container_width=True, config={"displayModeBar": False})
+
+    status_summary = (
+        filtered_high_value.groupby("Exit status", observed=True)
+        .agg(
+            Customers=("CustomerId", "size"),
+            **{
+                "Median balance": ("Balance", "median"),
+                "Median estimated salary": ("EstimatedSalary", "median"),
+            },
+        )
+        .reindex(["Retained", "Churned"])
+        .dropna(subset=["Customers"])
+        .reset_index()
+    )
+    status_summary["Customers"] = status_summary["Customers"].astype(int)
+    for measure in ["Median balance", "Median estimated salary"]:
+        status_summary[measure] = status_summary[measure].map(lambda value: f"{value:,.0f}")
+    st.subheader("Median profile by customer status")
+    st.dataframe(status_summary, hide_index=True, use_container_width=True)
+    st.caption("All charts, tables, and KPIs use the same selected high-value population. Balances tied to churned accounts describe account balances, not lost revenue.")
+    st.stop()
+
 if section != "Overview":
     upcoming = {
         "High-value explorer": "High-value customer criteria and analysis will be added in a later project milestone.",

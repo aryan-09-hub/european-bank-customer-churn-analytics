@@ -1,9 +1,8 @@
 # Customer Segmentation & Churn Pattern Analytics
 
 A Streamlit project for exploring customer churn patterns in European banking.
-The current version validates the supplied customer dataset and shows the
-customer total, churn rate, and retained and churned counts. Additional analysis
-views are planned for later development milestones.
+The app validates the supplied customer dataset and provides Overview,
+Geography & Demographics, Customer Segments, and High-value Explorer pages.
 
 ## Run locally
 
@@ -25,7 +24,7 @@ views are planned for later development milestones.
 `European_Bank.csv` is included in this repository for the project analysis. It
 contains customer-level identifiers, demographic and financial fields, and the
 churn indicator. The app validates the required schema and uses these records
-for the Overview and Geography & Demographics pages.
+for every dashboard page.
 
 ## Current scope
 
@@ -40,5 +39,7 @@ for the Overview and Geography & Demographics pages.
   product count, and engagement, with counts, churn rates, and churn contribution
 - Credit-score bands use dataset tertiles; positive balances split at their
   dataset median. The dashboard documents the resulting thresholds.
-- Clearly labeled placeholders for future high-value analysis
-- Navigation placeholders for future analysis sections
+- High-value explorer with a disclosed top-quartile positive-balance proxy,
+  filters for geography, age, balance, and activity, and balance and estimated
+  salary comparisons by churn status
+- Balances on churned accounts are not presented as revenue or profit lost
