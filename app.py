@@ -551,17 +551,13 @@ if section == "High-value explorer":
     st.caption("All charts, tables, and KPIs use the same selected high-value population. Balances tied to churned accounts describe account balances, not lost revenue.")
     st.stop()
 
-if section != "Overview":
-    upcoming = {
-        "High-value explorer": "High-value customer criteria and analysis will be added in a later project milestone.",
-    }
-    st.markdown('<div class="eyebrow">Workspace · in progress</div>', unsafe_allow_html=True)
-    st.title(section)
-    st.markdown(
-        f'<div class="panel"><div class="panel-title">This section is coming soon</div><div class="panel-copy">{upcoming[section]}</div><div class="table-placeholder">The Overview is the active page for the current UI milestone. No figures are displayed on this placeholder page.</div></div>',
-        unsafe_allow_html=True,
-    )
-    st.stop()
+def reset_overview_filters() -> None:
+    """Restore every overview filter to its unfiltered default."""
+    st.session_state["overview_geography"] = sorted(customer_data["Geography"].dropna().unique())
+    st.session_state["overview_age"] = ["Under 30", "30–45", "46–59", "60+"]
+    st.session_state["overview_status"] = "All customers"
+    st.session_state["overview_tenure"] = ["New (0–2 years)", "Mid-term (3–6 years)", "Long-term (7+ years)"]
+
 
 head_left, head_right = st.columns([5, 2])
 with head_left:
@@ -585,38 +581,58 @@ st.markdown("\n")
 if customer_data is None:
     st.error(data_error, icon="⚠️")
 else:
-    st.caption(f"Source: {DATA_FILE.name} · one row per unique customer · filters and charts arrive in later milestones.")
+    st.caption(f"Source: {DATA_FILE.name} · one row per unique customer · all results below reflect the selected filters.")
 
-st.markdown('<div class="eyebrow">Filters · later milestone</div>', unsafe_allow_html=True)
+st.markdown('<div class="eyebrow">Interactive filters</div>', unsafe_allow_html=True)
+if customer_data is not None:
+    segmented_data, segment_notes = build_segmented_data(customer_data)
+    countries = sorted(segmented_data["Geography"].dropna().unique().tolist())
+    age_groups = ["Under 30", "30–45", "46–59", "60+"]
+    tenure_groups = ["New (0–2 years)", "Mid-term (3–6 years)", "Long-term (7+ years)"]
+    st.session_state.setdefault("overview_geography", countries)
+    st.session_state.setdefault("overview_age", age_groups)
+    st.session_state.setdefault("overview_status", "All customers")
+    st.session_state.setdefault("overview_tenure", tenure_groups)
+
 filter_cols = st.columns([1.25, 1.25, 1.25, 1.1, 1.1])
 with filter_cols[0]:
-    st.selectbox("Geography", ["All countries", "France", "Germany", "Spain"], disabled=True)
+    selected_countries = st.multiselect("Geography", countries if customer_data is not None else [], key="overview_geography")
 with filter_cols[1]:
-    st.selectbox("Age group", ["All age groups", "Under 30", "30–45", "46–59", "60+"], disabled=True)
+    selected_ages = st.multiselect("Age group", age_groups, key="overview_age")
 with filter_cols[2]:
-    st.selectbox("Customer status", ["All customers", "Retained", "Churned"], disabled=True)
+    selected_status = st.selectbox("Customer status", ["All customers", "Retained", "Churned"], key="overview_status")
 with filter_cols[3]:
-    st.selectbox("Tenure", ["All tenure", "New", "Mid-term", "Long-term"], disabled=True)
+    selected_tenure = st.multiselect("Tenure", tenure_groups, key="overview_tenure")
 with filter_cols[4]:
     st.markdown("<div style='height:1.85rem'></div>", unsafe_allow_html=True)
-    st.button("Reset filters", disabled=True, use_container_width=True)
+    st.button("Reset filters", on_click=reset_overview_filters, disabled=customer_data is None, use_container_width=True)
+
+if customer_data is not None:
+    filtered_data = segmented_data.loc[
+        segmented_data["Geography"].isin(selected_countries)
+        & segmented_data["Age group"].isin(selected_ages)
+        & segmented_data["Tenure group"].isin(selected_tenure)
+    ].copy()
+    if selected_status != "All customers":
+        status_value = 1 if selected_status == "Churned" else 0
+        filtered_data = filtered_data.loc[filtered_data["Exited"].eq(status_value)].copy()
+else:
+    filtered_data = pd.DataFrame()
 
 st.markdown("\n")
 metric_cols = st.columns(4)
-metrics = [
-    ("TOTAL CUSTOMERS", "—", "Unavailable until the data validates", BLUE),
-    ("OVERALL CHURN RATE", "—", "Unavailable until the data validates", ROSE),
-    ("CHURNED CUSTOMERS", "—", "Unavailable until the data validates", ROSE),
-    ("RETAINED CUSTOMERS", "—", "Unavailable until the data validates", GREEN),
-]
-if customer_data is not None:
-    total_customers = len(customer_data)
-    churned_customers = int(customer_data["Exited"].eq(1).sum())
+metrics = [("TOTAL CUSTOMERS", "—", "Unavailable until the data validates", BLUE),
+           ("CHURN RATE", "—", "Unavailable until the data validates", ROSE),
+           ("CHURNED CUSTOMERS", "—", "Unavailable until the data validates", ROSE),
+           ("RETAINED CUSTOMERS", "—", "Unavailable until the data validates", GREEN)]
+if customer_data is not None and not filtered_data.empty:
+    total_customers = len(filtered_data)
+    churned_customers = int(filtered_data["Exited"].eq(1).sum())
     retained_customers = total_customers - churned_customers
     churn_rate = churned_customers / total_customers
     metrics = [
-        ("TOTAL CUSTOMERS", f"{total_customers:,}", "Unique customer records", BLUE),
-        ("OVERALL CHURN RATE", f"{churn_rate:.1%}", "Churned ÷ total customers", ROSE),
+        ("CUSTOMERS IN VIEW", f"{total_customers:,}", "Unique records matching filters", BLUE),
+        ("CHURN RATE", f"{churn_rate:.1%}", "Churned ÷ customers in view", ROSE),
         ("CHURNED CUSTOMERS", f"{churned_customers:,}", "Exited = 1", ROSE),
         ("RETAINED CUSTOMERS", f"{retained_customers:,}", "Exited = 0", GREEN),
     ]
@@ -627,15 +643,57 @@ for col, (label, value, note, accent) in zip(metric_cols, metrics):
             unsafe_allow_html=True,
         )
 
-st.markdown("\n")
-chart_left, chart_right = st.columns([1.15, 1])
-with chart_left:
-    st.markdown('<div class="panel"><div class="panel-title">Churn by geography</div><div class="panel-copy">Compare customer exit rates across France, Germany, and Spain.</div><div class="empty"><div class="empty-icon">▥</div><strong>Analysis planned for a later milestone</strong><span>The dataset is loaded; geography breakdowns are not part of this phase.</span></div></div>', unsafe_allow_html=True)
-with chart_right:
-    st.markdown('<div class="panel"><div class="panel-title">Customer status mix</div><div class="panel-copy">Retained and churned customers across the selected population.</div><div class="empty"><div class="empty-icon">◉</div><strong>Analysis planned for a later milestone</strong><span>The headline status counts above are live; the chart comes later.</span></div></div>', unsafe_allow_html=True)
+if customer_data is None:
+    st.info("The overview charts and segment drill-down are unavailable until the dataset validates.")
+elif filtered_data.empty:
+    st.info("No customers match these filters. Change a selection or reset the filters to continue.")
+else:
+    st.markdown("\n")
+    chart_left, chart_right = st.columns([1.15, 1])
+    with chart_left:
+        st.subheader("Churn by geography")
+        country_summary = summarize_churn(filtered_data, "Geography").sort_values("Geography")
+        geography_chart = px.bar(
+            country_summary, x="Geography", y="Churn_Rate", color="Churn_Rate",
+            color_continuous_scale=[BLUE, ROSE], custom_data=["Customers", "Churned"],
+            labels={"Geography": "Country", "Churn_Rate": "Churn rate"},
+        )
+        geography_chart.update_traces(hovertemplate="%{x}<br>Churn rate: %{y:.1%}<br>Customers: %{customdata[0]:,}<br>Churned: %{customdata[1]:,}<extra></extra>")
+        style_chart(geography_chart).update_layout(coloraxis_showscale=False)
+        st.plotly_chart(geography_chart, use_container_width=True, config={"displayModeBar": False})
+    with chart_right:
+        st.subheader("Customer status mix")
+        status_counts = filtered_data["Exited"].map({0: "Retained", 1: "Churned"}).value_counts().rename_axis("Status").reset_index(name="Customers")
+        status_chart = px.pie(
+            status_counts, names="Status", values="Customers", hole=0.68,
+            color="Status", color_discrete_map={"Retained": GREEN, "Churned": ROSE},
+        )
+        status_chart.update_traces(textinfo="percent", hovertemplate="%{label}<br>Customers: %{value:,}<br>Share: %{percent}<extra></extra>")
+        status_chart.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", font={"family": "Inter, sans-serif", "color": TEXT}, margin={"l": 12, "r": 12, "t": 24, "b": 12}, height=330, showlegend=True, legend={"orientation": "h", "y": -0.08})
+        st.plotly_chart(status_chart, use_container_width=True, config={"displayModeBar": False})
 
-st.markdown("\n")
-st.markdown('<div class="panel"><div class="panel-title">Segment snapshot</div><div class="panel-copy">A preview of the segment comparison table.</div><div class="table-placeholder">Segment comparisons are planned for a later milestone.</div></div>', unsafe_allow_html=True)
+    st.markdown("\n")
+    st.subheader("Segment snapshot")
+    dimension_options = ["Age group", "Credit score", "Tenure group", "Balance group", "Product count", "Activity"]
+    selected_dimension = st.selectbox("Segment dimension", dimension_options, key="overview_segment_dimension")
+    segment_summary = summarize_segment_churn(filtered_data, selected_dimension)
+    segment_display = segment_summary.rename(columns={"Segment": "Segment name"}).copy()
+    segment_display["Churn rate"] = segment_display["Churn rate"].map(lambda rate: f"{rate:.1%}")
+    segment_display["Churn contribution"] = segment_display["Churn contribution"].map(lambda share: f"{share:.1%}")
+    st.dataframe(segment_display, hide_index=True, use_container_width=True)
 
-st.markdown("\n")
-st.caption("Customer counts and churn rate use the validated source labels; filters and breakdowns are not active yet.")
+    st.subheader("Drill into a segment")
+    segment_values = filtered_data[selected_dimension].dropna().astype(str).unique().tolist()
+    drill_cols = st.columns([1, 2])
+    with drill_cols[0]:
+        selected_segment = st.selectbox("Choose a segment", segment_values, key="overview_drill_segment")
+    cohort = filtered_data.loc[filtered_data[selected_dimension].astype(str).eq(selected_segment)]
+    with drill_cols[1]:
+        cohort_churn = float(cohort["Exited"].mean()) if len(cohort) else 0
+        median_balance = float(cohort["Balance"].median()) if len(cohort) else 0
+        median_salary = float(cohort["EstimatedSalary"].median()) if len(cohort) else 0
+        st.caption(f"{len(cohort):,} customers · {int(cohort['Exited'].sum()):,} churned · {cohort_churn:.1%} churn rate · median balance {median_balance:,.0f} · median estimated salary {median_salary:,.0f} (source units)")
+    geography_detail = summarize_churn(cohort, "Geography").rename(columns={"Geography": "Country", "Churn_Rate": "Churn rate"})
+    geography_detail["Churn rate"] = geography_detail["Churn rate"].map(lambda rate: f"{rate:.1%}")
+    st.dataframe(geography_detail, hide_index=True, use_container_width=True)
+    st.caption("All values describe the selected records in the supplied dataset. Segment rates are descriptive and do not establish causation.")

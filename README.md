@@ -42,4 +42,8 @@ for every dashboard page.
 - High-value explorer with a disclosed top-quartile positive-balance proxy,
   filters for geography, age, balance, and activity, and balance and estimated
   salary comparisons by churn status
+- Overview filters for geography, age, customer status, and tenure that update
+  the customer KPIs, geography churn chart, customer status mix, and segment table
+- Segment drill-down with customer counts, churn rates, balance and salary
+  medians, and a country breakdown; Reset filters restores the full population
 - Balances on churned accounts are not presented as revenue or profit lost
