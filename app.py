@@ -29,6 +29,9 @@ REQUIRED_COLUMNS = {
     "Exited",
 }
 BINARY_COLUMNS = ("HasCrCard", "IsActiveMember", "Exited")
+NUMERIC_ANALYSIS_COLUMNS = (
+    "CreditScore", "Age", "Tenure", "Balance", "NumOfProducts", "EstimatedSalary"
+)
 
 
 class DataValidationError(ValueError):
@@ -51,6 +54,17 @@ def load_customer_data(path: str) -> pd.DataFrame:
     if duplicate_ids:
         raise DataValidationError(f"CustomerId contains {duplicate_ids:,} duplicate records.")
 
+    for column in NUMERIC_ANALYSIS_COLUMNS:
+        values = pd.to_numeric(customers[column], errors="coerce")
+        invalid_values = (customers[column].notna() & values.isna()) | values.isin(
+            [float("inf"), -float("inf")]
+        )
+        if invalid_values.any():
+            raise DataValidationError(
+                f"{column} must contain finite numeric values; found {int(invalid_values.sum()):,} invalid records."
+            )
+        customers[column] = values
+
     for column in BINARY_COLUMNS:
         values = pd.to_numeric(customers[column], errors="coerce")
         invalid = values.isna() | ~values.isin((0, 1))
@@ -72,6 +86,12 @@ def summarize_churn(data: pd.DataFrame, dimension: str) -> pd.DataFrame:
     )
 
 
+def assign_binned_labels(series: pd.Series, bins: list, labels: list[str]) -> pd.Series:
+    """Bin observed values and retain missing values as an explicit Unknown group."""
+    grouped = pd.cut(series, bins=bins, labels=labels).astype("object")
+    return grouped.where(series.notna(), "Unknown")
+
+
 def style_chart(figure, height: int = 330):
     figure.update_layout(
         template="plotly_dark",
@@ -90,44 +110,59 @@ def style_chart(figure, height: int = 330):
 def build_segmented_data(data: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, str]]:
     """Add documented, analysis-only segment labels derived from the source data."""
     segmented = data.copy()
-    segmented["Age group"] = pd.cut(
+    segmented["Age group"] = assign_binned_labels(
         segmented["Age"],
         bins=[-float("inf"), 29, 45, 59, float("inf")],
         labels=["Under 30", "30–45", "46–59", "60+"],
     )
 
-    credit_low = int(data["CreditScore"].quantile(1 / 3))
-    credit_high = int(data["CreditScore"].quantile(2 / 3))
-    segmented["Credit score"] = pd.cut(
-        segmented["CreditScore"],
-        bins=[-float("inf"), credit_low, credit_high, float("inf")],
-        labels=["Low", "Medium", "High"],
-    )
+    valid_scores = data["CreditScore"].dropna()
+    segmented["Credit score"] = "Unknown"
+    if valid_scores.empty:
+        credit_note = "No valid credit scores are available; customers are grouped as Unknown."
+    else:
+        credit_low = int(valid_scores.quantile(1 / 3))
+        credit_high = int(valid_scores.quantile(2 / 3))
+        score = data["CreditScore"]
+        segmented.loc[score.notna() & score.le(credit_low), "Credit score"] = "Low"
+        segmented.loc[score.gt(credit_low) & score.le(credit_high), "Credit score"] = "Medium"
+        segmented.loc[score.gt(credit_high), "Credit score"] = "High"
+        credit_note = f"Relative bands based on this dataset’s tertiles: Low ≤ {credit_low}; Medium {credit_low + 1}–{credit_high}; High > {credit_high}. These are descriptive groupings, not lending thresholds."
 
-    segmented["Tenure group"] = pd.cut(
+    segmented["Tenure group"] = assign_binned_labels(
         segmented["Tenure"],
         bins=[-float("inf"), 2, 6, float("inf")],
         labels=["New (0–2 years)", "Mid-term (3–6 years)", "Long-term (7+ years)"],
     )
 
     positive_balance_median = data.loc[data["Balance"].gt(0), "Balance"].median()
-    segmented["Balance group"] = pd.Series("Zero balance", index=data.index, dtype="object")
+    segmented["Balance group"] = "Unknown"
+    segmented.loc[data["Balance"].eq(0), "Balance group"] = "Zero balance"
+    segmented.loc[data["Balance"].lt(0), "Balance group"] = "Negative balance"
     positive_balance = data["Balance"].gt(0)
-    segmented.loc[positive_balance & data["Balance"].le(positive_balance_median), "Balance group"] = "Low positive balance"
-    segmented.loc[positive_balance & data["Balance"].gt(positive_balance_median), "Balance group"] = "High positive balance"
+    if pd.notna(positive_balance_median):
+        segmented.loc[positive_balance & data["Balance"].le(positive_balance_median), "Balance group"] = "Low positive balance"
+        segmented.loc[positive_balance & data["Balance"].gt(positive_balance_median), "Balance group"] = "High positive balance"
 
-    segmented["Product count"] = segmented["NumOfProducts"].map(lambda value: f"{value} product{'s' if value != 1 else ''}")
-    segmented["Activity"] = segmented["IsActiveMember"].map({1: "Active", 0: "Inactive"})
+    segmented["Product count"] = segmented["NumOfProducts"].map(
+        lambda value: f"{value} product{'s' if value != 1 else ''}" if pd.notna(value) else "Unknown"
+    )
+    segmented["Activity"] = segmented["IsActiveMember"].map({1: "Active", 0: "Inactive"}).fillna("Unknown")
 
     notes = {
-        "Age group": "Age bands use the project cutoffs: under 30, 30–45, 46–59, and 60+.",
-        "Credit score": f"Relative bands based on this dataset’s tertiles: Low ≤ {credit_low}; Medium {credit_low + 1}–{credit_high}; High > {credit_high}. These are descriptive groupings, not lending thresholds.",
-        "Tenure group": "New = 0–2 years; Mid-term = 3–6 years; Long-term = 7 or more years.",
-        "Balance group": f"Zero balance = 0; positive balances split at the dataset median of {positive_balance_median:,.2f} (lower band includes the median). Units are as recorded in the source.",
-        "Product count": "Segments show the number of products recorded for each customer.",
-        "Activity": "Active and inactive labels come from IsActiveMember (1 = active, 0 = inactive).",
+        "Age group": "Age bands use the project cutoffs: under 30, 30–45, 46–59, and 60+. Missing ages are grouped as Unknown.",
+        "Credit score": credit_note,
+        "Tenure group": "New = 0–2 years; Mid-term = 3–6 years; Long-term = 7 or more years. Missing tenure is grouped as Unknown.",
+        "Balance group": (f"Negative balances are separate; zero = 0; positive balances split at the dataset median of {positive_balance_median:,.2f} (lower band includes the median). Missing balances are grouped as Unknown. Units are as recorded in the source." if pd.notna(positive_balance_median) else "Negative and zero balances are separate; no positive balances are available to calculate a split. Missing values are grouped as Unknown."),
+        "Product count": "Segments show the number of products recorded for each customer; missing counts are grouped as Unknown.",
+        "Activity": "Active and inactive labels come from IsActiveMember (1 = active, 0 = inactive); missing values are grouped as Unknown.",
     }
     return segmented, notes
+
+
+def format_median(value: float) -> str:
+    """Display a missing median as unavailable instead of the string 'nan'."""
+    return f"{value:,.0f}" if pd.notna(value) else "—"
 
 
 def summarize_segment_churn(data: pd.DataFrame, dimension: str) -> pd.DataFrame:
@@ -139,6 +174,24 @@ def summarize_segment_churn(data: pd.DataFrame, dimension: str) -> pd.DataFrame:
         summary["Churned"] / total_churned if total_churned else 0
     )
     return summary
+
+
+def filter_overview_data(
+    data: pd.DataFrame,
+    countries: list[str],
+    age_groups: list[str],
+    status: str,
+    tenure_groups: list[str],
+) -> pd.DataFrame:
+    """Apply the Overview selections to one consistent customer population."""
+    selected = data.loc[
+        data["Geography"].isin(countries)
+        & data["Age group"].isin(age_groups)
+        & data["Tenure group"].isin(tenure_groups)
+    ]
+    if status != "All customers":
+        selected = selected.loc[selected["Exited"].eq(1 if status == "Churned" else 0)]
+    return selected.copy()
 
 
 try:
@@ -235,7 +288,7 @@ if section == "Geography & demographics":
         st.stop()
 
     analysis_data = customer_data.copy()
-    analysis_data["Age group"] = pd.cut(
+    analysis_data["Age group"] = assign_binned_labels(
         analysis_data["Age"],
         bins=[-float("inf"), 29, 45, 59, float("inf")],
         labels=["Under 30", "30–45", "46–59", "60+"],
@@ -399,15 +452,19 @@ if section == "High-value explorer":
         st.stop()
 
     positive_balances = customer_data.loc[customer_data["Balance"].gt(0), "Balance"]
+    if positive_balances.empty:
+        st.info("The high-value explorer needs at least one customer with a positive balance. The current dataset has none.")
+        st.stop()
     high_value_threshold = float(positive_balances.quantile(0.75))
     max_balance = float(customer_data["Balance"].max())
     balance_step = max((max_balance - high_value_threshold) / 100, 1.0)
     high_value_data = customer_data.loc[customer_data["Balance"].ge(high_value_threshold)].copy()
-    high_value_data["Age group"] = pd.cut(
+    high_value_data["Age group"] = assign_binned_labels(
         high_value_data["Age"],
         bins=[-float("inf"), 29, 45, 59, float("inf")],
         labels=["Under 30", "30–45", "46–59", "60+"],
     )
+    high_value_data["Geography"] = high_value_data["Geography"].fillna("Unknown")
     high_value_data["Activity"] = high_value_data["IsActiveMember"].map({1: "Active", 0: "Inactive"})
     high_value_data["Exit status"] = high_value_data["Exited"].map({0: "Retained", 1: "Churned"})
 
@@ -416,7 +473,7 @@ if section == "High-value explorer":
         f"({high_value_threshold:,.2f} source units). This is an analysis definition, not a revenue or profitability measure."
     )
     country_options = sorted(high_value_data["Geography"].dropna().unique().tolist())
-    age_options = ["Under 30", "30–45", "46–59", "60+"]
+    age_options = ["Under 30", "30–45", "46–59", "60+", "Unknown"]
     filter_row = st.columns(2)
     with filter_row[0]:
         selected_countries = st.multiselect(
@@ -426,15 +483,19 @@ if section == "High-value explorer":
         selected_ages = st.multiselect(
             "Age group", age_options, default=age_options, key="high_value_age"
         )
-    balance_range = st.slider(
-        "Balance range (source units)",
-        min_value=high_value_threshold,
-        max_value=max_balance,
-        value=(high_value_threshold, max_balance),
-        step=balance_step,
-        format="%.0f",
-        key="high_value_balance_range",
-    )
+    if max_balance > high_value_threshold:
+        balance_range = st.slider(
+            "Balance range (source units)",
+            min_value=high_value_threshold,
+            max_value=max_balance,
+            value=(high_value_threshold, max_balance),
+            step=balance_step,
+            format="%.0f",
+            key="high_value_balance_range",
+        )
+    else:
+        st.caption("All positive balances are equal, so there is no balance range to adjust.")
+        balance_range = (high_value_threshold, max_balance)
     activity_filter = st.selectbox(
         "Engagement", ["All members", "Active", "Inactive"], key="high_value_activity"
     )
@@ -545,7 +606,7 @@ if section == "High-value explorer":
     )
     status_summary["Customers"] = status_summary["Customers"].astype(int)
     for measure in ["Median balance", "Median estimated salary"]:
-        status_summary[measure] = status_summary[measure].map(lambda value: f"{value:,.0f}")
+        status_summary[measure] = status_summary[measure].map(format_median)
     st.subheader("Median profile by customer status")
     st.dataframe(status_summary, hide_index=True, use_container_width=True)
     st.caption("All charts, tables, and KPIs use the same selected high-value population. Balances tied to churned accounts describe account balances, not lost revenue.")
@@ -553,10 +614,12 @@ if section == "High-value explorer":
 
 def reset_overview_filters() -> None:
     """Restore every overview filter to its unfiltered default."""
-    st.session_state["overview_geography"] = sorted(customer_data["Geography"].dropna().unique())
-    st.session_state["overview_age"] = ["Under 30", "30–45", "46–59", "60+"]
+    st.session_state["overview_geography"] = sorted(
+        customer_data["Geography"].fillna("Unknown").unique()
+    )
+    st.session_state["overview_age"] = ["Under 30", "30–45", "46–59", "60+", "Unknown"]
     st.session_state["overview_status"] = "All customers"
-    st.session_state["overview_tenure"] = ["New (0–2 years)", "Mid-term (3–6 years)", "Long-term (7+ years)"]
+    st.session_state["overview_tenure"] = ["New (0–2 years)", "Mid-term (3–6 years)", "Long-term (7+ years)", "Unknown"]
 
 
 head_left, head_right = st.columns([5, 2])
@@ -584,11 +647,13 @@ else:
     st.caption(f"Source: {DATA_FILE.name} · one row per unique customer · all results below reflect the selected filters.")
 
 st.markdown('<div class="eyebrow">Interactive filters</div>', unsafe_allow_html=True)
+countries = []
+age_groups = ["Under 30", "30–45", "46–59", "60+", "Unknown"]
+tenure_groups = ["New (0–2 years)", "Mid-term (3–6 years)", "Long-term (7+ years)", "Unknown"]
 if customer_data is not None:
     segmented_data, segment_notes = build_segmented_data(customer_data)
+    segmented_data["Geography"] = segmented_data["Geography"].fillna("Unknown")
     countries = sorted(segmented_data["Geography"].dropna().unique().tolist())
-    age_groups = ["Under 30", "30–45", "46–59", "60+"]
-    tenure_groups = ["New (0–2 years)", "Mid-term (3–6 years)", "Long-term (7+ years)"]
     st.session_state.setdefault("overview_geography", countries)
     st.session_state.setdefault("overview_age", age_groups)
     st.session_state.setdefault("overview_status", "All customers")
@@ -608,14 +673,9 @@ with filter_cols[4]:
     st.button("Reset filters", on_click=reset_overview_filters, disabled=customer_data is None, use_container_width=True)
 
 if customer_data is not None:
-    filtered_data = segmented_data.loc[
-        segmented_data["Geography"].isin(selected_countries)
-        & segmented_data["Age group"].isin(selected_ages)
-        & segmented_data["Tenure group"].isin(selected_tenure)
-    ].copy()
-    if selected_status != "All customers":
-        status_value = 1 if selected_status == "Churned" else 0
-        filtered_data = filtered_data.loc[filtered_data["Exited"].eq(status_value)].copy()
+    filtered_data = filter_overview_data(
+        segmented_data, selected_countries, selected_ages, selected_status, selected_tenure
+    )
 else:
     filtered_data = pd.DataFrame()
 
@@ -690,9 +750,9 @@ else:
     cohort = filtered_data.loc[filtered_data[selected_dimension].astype(str).eq(selected_segment)]
     with drill_cols[1]:
         cohort_churn = float(cohort["Exited"].mean()) if len(cohort) else 0
-        median_balance = float(cohort["Balance"].median()) if len(cohort) else 0
-        median_salary = float(cohort["EstimatedSalary"].median()) if len(cohort) else 0
-        st.caption(f"{len(cohort):,} customers · {int(cohort['Exited'].sum()):,} churned · {cohort_churn:.1%} churn rate · median balance {median_balance:,.0f} · median estimated salary {median_salary:,.0f} (source units)")
+        median_balance = format_median(cohort["Balance"].median())
+        median_salary = format_median(cohort["EstimatedSalary"].median())
+        st.caption(f"{len(cohort):,} customers · {int(cohort['Exited'].sum()):,} churned · {cohort_churn:.1%} churn rate · median balance {median_balance} · median estimated salary {median_salary} (source units)")
     geography_detail = summarize_churn(cohort, "Geography").rename(columns={"Geography": "Country", "Churn_Rate": "Churn rate"})
     geography_detail["Churn rate"] = geography_detail["Churn rate"].map(lambda rate: f"{rate:.1%}")
     st.dataframe(geography_detail, hide_index=True, use_container_width=True)

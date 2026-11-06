@@ -46,4 +46,8 @@ for every dashboard page.
   the customer KPIs, geography churn chart, customer status mix, and segment table
 - Segment drill-down with customer counts, churn rates, balance and salary
   medians, and a country breakdown; Reset filters restores the full population
+- Missing values in analytical segment fields are grouped as Unknown; zero,
+  negative, and positive balances are kept distinct
+- High-value analysis reports a clear empty state when the source has no positive
+  balances and avoids a slider when all positive balances are identical
 - Balances on churned accounts are not presented as revenue or profit lost
