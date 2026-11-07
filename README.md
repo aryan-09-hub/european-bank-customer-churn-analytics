@@ -1,53 +1,38 @@
 # Customer Segmentation & Churn Pattern Analytics
 
-A Streamlit project for exploring customer churn patterns in European banking.
-The app validates the supplied customer dataset and provides Overview,
-Geography & Demographics, Customer Segments, and High-value Explorer pages.
+A Streamlit dashboard and exploratory analysis of customer churn in the supplied European banking dataset. The analysis covers 10,000 customer records from France, Germany, and Spain. It describes patterns in the data; it does not predict churn or establish why customers leave.
+
+## Project documents
+
+- [Research paper](docs/research_paper.md): data, methods, findings, limitations, and recommendations
+- [Executive summary](docs/executive_summary.md): key findings and suggested actions for decision-makers
 
 ## Run locally
 
-1. Create and activate a Python virtual environment.
-2. Install the project dependencies:
+1. Use Python 3.12 or another version supported by Streamlit.
+2. Create and activate a virtual environment.
+3. Install the listed packages and run the dashboard:
 
    ```bash
    pip install -r requirements.txt
-   ```
-
-3. Start the dashboard:
-
-   ```bash
    streamlit run app.py
    ```
 
-## Dataset
+The dashboard opens in a browser. Keep `European_Bank.csv` beside `app.py`.
 
-`European_Bank.csv` is included in this repository for the project analysis. It
-contains customer-level identifiers, demographic and financial fields, and the
-churn indicator. The app validates the required schema and uses these records
-for every dashboard page.
+## Data
 
-## Current scope
+`European_Bank.csv` contains 10,000 customer records and 14 columns. The app validates the required fields, unique customer IDs, binary status fields, and numeric analysis fields. The supplied file has no missing values or duplicate customer IDs. `Year` is 2025 in every row and is not used in the analysis. The dataset’s origin, sampling method, and currency are not documented in the repository; financial values are therefore reported in source units.
 
-- Dark banking analytics dashboard foundation
-- Loads the local `European_Bank.csv` file and validates its required schema,
-  unique customer IDs, and binary engagement and churn fields
-- Overview KPIs for total customers, churn rate, churned customers, and retained
-  customers
-- Geography and demographics page with country, age-group, gender, and
-  country-by-age churn comparisons, including customer counts
-- Customer segmentation page covering age, credit score, tenure, balance,
-  product count, and engagement, with counts, churn rates, and churn contribution
-- Credit-score bands use dataset tertiles; positive balances split at their
-  dataset median. The dashboard documents the resulting thresholds.
-- High-value explorer with a disclosed top-quartile positive-balance proxy,
-  filters for geography, age, balance, and activity, and balance and estimated
-  salary comparisons by churn status
-- Overview filters for geography, age, customer status, and tenure that update
-  the customer KPIs, geography churn chart, customer status mix, and segment table
-- Segment drill-down with customer counts, churn rates, balance and salary
-  medians, and a country breakdown; Reset filters restores the full population
-- Missing values in analytical segment fields are grouped as Unknown; zero,
-  negative, and positive balances are kept distinct
-- High-value analysis reports a clear empty state when the source has no positive
-  balances and avoids a slider when all positive balances are identical
-- Balances on churned accounts are not presented as revenue or profit lost
+## Dashboard
+
+- **Overview:** customer counts and churn rate, with interactive geography, age, status, and tenure filters; filters update the KPIs, charts, and segment drill-down.
+- **Geography & demographics:** churn comparisons by country, age, gender, and country by age.
+- **Customer segments:** age, dataset-relative credit score, tenure, balance, product count, and activity comparisons.
+- **High-value explorer:** customers with positive balances at or above the 75th percentile of positive balances; filters for country, age, balance, and activity.
+
+Missing analytical segment values are grouped as Unknown. Credit-score tertiles and balance medians are descriptive cutoffs from this dataset. The high-value criterion is a balance proxy, not a measure of customer lifetime value. Balances held by churned customers are not reported as lost revenue or profit.
+
+## Repository
+
+The project is maintained at [european-bank-customer-churn-analytics](https://github.com/aryan-09-hub/european-bank-customer-churn-analytics).
