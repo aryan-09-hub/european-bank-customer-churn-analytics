@@ -19,7 +19,7 @@ The dashboard supports exploration of these questions. It does not make individu
 
 ## 2. Data and scope
 
-The source is `European_Bank.csv` in this repository. It has 10,000 rows and 14 columns: `Year`, customer identifier and surname, credit score, geography, gender, age, tenure, balance, product count, card ownership, activity, estimated salary, and the churn label `Exited`. In the supplied file, customer IDs are unique, the required fields contain no missing values, and all three binary fields (`HasCrCard`, `IsActiveMember`, and `Exited`) contain valid 0/1 values.
+The source is `European_Bank.csv` in this repository. It has 10,000 rows and 14 columns: `Year`, customer identifier and surname, credit score, geography, gender, age, tenure, balance, product count, card ownership, activity, estimated salary, and the churn label `Exited`. In the supplied file, customer IDs are unique, the required fields contain no missing values, and all three binary fields (`HasCrCard`, `IsActiveMember`, and `Exited`) contain valid 0/1 values. The app validates the input schema, then drops surname before any analysis; customer ID remains only for unique-customer counts.
 
 The geographic groups are France (5,014 customers), Germany (2,509), and Spain (2,477). All records have `Year = 2025`; the analysis treats that field as a dataset label because its meaning is not documented. The repository does not identify the dataset’s original publisher, sampling frame, or currency. Values for balance and estimated salary are therefore shown in source units.
 
@@ -37,9 +37,19 @@ Churn contribution is a group’s share of all churned customers in the populati
 
 Contribution depends on both segment size and churn rate. It should not be interpreted as a risk score.
 
+The dashboard also reports two supplementary indices:
+
+> geographic exposure index = (a country's share of churned customers ÷ its share of customers) × 100
+
+An index of 100 matches the dataset-wide distribution; above 100 means the country contributes a larger share of churn than its share of customers. It is a relative descriptive index, recalculated for the selected population.
+
+> engagement gap = churn rate among inactive customers − churn rate among active customers
+
+The engagement gap is shown in percentage points in the selected segment drill-down. The dataset has only a current activity flag, so it cannot measure a change in engagement over time.
+
 ### 3.2 Segment definitions
 
-- **Age:** under 30, 30–45, 46–59, and 60+.
+- **Age:** under 30, 30–45, 46–59, and 60+. The examiner wording “46–60, 60+” overlaps at age 60; this implementation assigns age 60 to 60+ so every customer belongs to one band exactly once.
 - **Credit score:** dataset-relative tertiles. The observed cutoffs are 608 and 695: Low ≤608, Medium 609–695, and High >695. These are not lending or credit eligibility thresholds.
 - **Tenure:** New (0–2 years), Mid-term (3–6 years), and Long-term (7+ years).
 - **Balance:** zero, negative (if present), and positive balance split at the median of positive balances. The observed positive-balance median is 119,839.69 source units.
@@ -62,7 +72,7 @@ Of 10,000 listed customers, 2,037 are marked as churned and 7,963 as retained. T
 | Germany | 2,509 | 814 | 32.4% | 40.0% |
 | Spain | 2,477 | 413 | 16.7% | 20.3% |
 
-Germany has about half as many listed customers as France but a similar number of churned records. Its observed rate is nearly twice France’s and Spain’s. This makes Germany a useful starting point for aggregate investigation; the data alone does not explain the difference.
+Germany has about half as many listed customers as France but a similar number of churned records. Its observed rate is nearly twice France’s and Spain’s. Its exposure index is 159.1, compared with 79.3 for France and 81.9 for Spain. This makes Germany a useful starting point for aggregate investigation; the data alone does not explain the difference.
 
 ### 4.3 Age and geography-by-age patterns
 
@@ -107,7 +117,7 @@ Churn is 13.8% among zero-balance customers, 24.0% among customers with low posi
 
 ### 4.6 High-balance proxy cohort
 
-The high-balance cohort contains 1,596 customers (15.96% of the dataset), of whom 367 are churned. Its churn rate is **23.0%**, and it contributes **18.0%** of all churned records. The sum of account balances for these 367 churned customers is **58,714,368.09 source units**. This is a descriptive balance exposure measure only; it is not an estimate of revenue lost.
+The high-balance cohort contains 1,596 customers (15.96% of the dataset), of whom 367 are churned. Its churn rate is **23.0%**, and its share of all churned records is **18.0%**. With filters applied, this KPI is filtered-cohort churned customers divided by all churned customers in the dataset. The sum of account balances for these 367 churned customers is **58,714,368.09 source units**. This is a descriptive balance exposure measure only; it is not an estimate of revenue lost.
 
 | Country | Customers | Churned | Churn rate | Balance on churned accounts (source units) |
 |---|---:|---:|---:|---:|

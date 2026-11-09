@@ -74,7 +74,9 @@ def load_customer_data(path: str) -> pd.DataFrame:
             )
         customers[column] = values.astype("int8")
 
-    return customers
+    # Keep identifiers needed for grouping and counts; exclude surname from every
+    # downstream analytical dataframe because it has no analytical role.
+    return customers.drop(columns=["Surname"])
 
 
 def summarize_churn(data: pd.DataFrame, dimension: str) -> pd.DataFrame:
@@ -84,6 +86,20 @@ def summarize_churn(data: pd.DataFrame, dimension: str) -> pd.DataFrame:
         .agg(Customers="size", Churned="sum", Churn_Rate="mean")
         .reset_index()
     )
+
+
+def add_geographic_exposure(summary: pd.DataFrame) -> pd.DataFrame:
+    """Index each region's share of churn against its share of customers (overall = 100)."""
+    result = summary.copy()
+    total_customers = int(result["Customers"].sum())
+    total_churned = int(result["Churned"].sum())
+    if total_customers == 0 or total_churned == 0:
+        result["Geographic exposure index"] = 0.0
+    else:
+        customer_share = result["Customers"] / total_customers
+        churn_share = result["Churned"] / total_churned
+        result["Geographic exposure index"] = (churn_share / customer_share) * 100
+    return result
 
 
 def assign_binned_labels(series: pd.Series, bins: list, labels: list[str]) -> pd.Series:
@@ -293,7 +309,9 @@ if section == "Geography & demographics":
         bins=[-float("inf"), 29, 45, 59, float("inf")],
         labels=["Under 30", "30–45", "46–59", "60+"],
     )
-    country_summary = summarize_churn(analysis_data, "Geography").sort_values("Churn_Rate", ascending=False)
+    country_summary = add_geographic_exposure(
+        summarize_churn(analysis_data, "Geography")
+    ).sort_values("Churn_Rate", ascending=False)
     age_summary = summarize_churn(analysis_data, "Age group")
     gender_summary = summarize_churn(analysis_data, "Gender").sort_values("Churn_Rate", ascending=False)
     country_age = analysis_data.pivot_table(
@@ -334,7 +352,7 @@ if section == "Geography & demographics":
         st.dataframe(
             country_summary.rename(columns={"Geography": "Country", "Churn_Rate": "Churn rate"})
             .assign(**{"Churn rate": lambda table: table["Churn rate"].map(lambda rate: f"{rate:.1%}")})
-            [["Country", "Customers", "Churned", "Churn rate"]],
+            [["Country", "Customers", "Churned", "Churn rate", "Geographic exposure index"]],
             hide_index=True, use_container_width=True,
         )
     with right:
@@ -518,10 +536,11 @@ if section == "High-value explorer":
     churned_high_value = filtered_high_value.loc[filtered_high_value["Exited"].eq(1)]
     churn_rate_high_value = len(churned_high_value) / total_high_value
     churned_balance = float(churned_high_value["Balance"].sum())
+    churn_share = len(churned_high_value) / int(customer_data["Exited"].sum()) if int(customer_data["Exited"].sum()) else 0
     kpi_values = [
         ("HIGH-VALUE CUSTOMERS", f"{total_high_value:,}", "Customers in the filtered cohort", BLUE),
         ("CHURN RATE", f"{churn_rate_high_value:.1%}", "Churned ÷ filtered cohort", ROSE),
-        ("CHURNED CUSTOMERS", f"{len(churned_high_value):,}", "Exited = 1", ROSE),
+        ("SHARE OF ALL CHURN", f"{churn_share:.1%}", "Filtered cohort churn ÷ all churned", ROSE),
         ("BALANCE ON CHURNED ACCOUNTS", f"{churned_balance:,.0f}", "Source units; not revenue", GREEN),
     ]
     for column, (label, value, note, accent) in zip(st.columns(4), kpi_values):
@@ -540,6 +559,7 @@ if section == "High-value explorer":
         .rename(columns={"Geography": "Country"})
     )
     country_summary["Churn rate"] = country_summary["Churned"] / country_summary["Customers"]
+    country_summary["Share of all churn"] = country_summary["Churned"] / int(customer_data["Exited"].sum()) if int(customer_data["Exited"].sum()) else 0
     balance_by_country = (
         churned_high_value.groupby("Geography", observed=True)["Balance"].sum()
         .rename("Balance on churned accounts")
@@ -553,9 +573,15 @@ if section == "High-value explorer":
         }
     )
     st.dataframe(
-        display_country[["Country", "Customers", "Churned", "Churn rate", "Balance on churned accounts"]],
+        display_country[["Country", "Customers", "Churned", "Churn rate", "Share of all churn", "Balance on churned accounts"]],
         hide_index=True,
         use_container_width=True,
+    )
+    st.download_button(
+        "Download filtered high-value summary (CSV)",
+        data=country_summary.to_csv(index=False).encode("utf-8"),
+        file_name="high_value_churn_summary.csv",
+        mime="text/csv",
     )
 
     st.markdown("\n")
@@ -712,7 +738,9 @@ else:
     chart_left, chart_right = st.columns([1.15, 1])
     with chart_left:
         st.subheader("Churn by geography")
-        country_summary = summarize_churn(filtered_data, "Geography").sort_values("Geography")
+        country_summary = add_geographic_exposure(
+            summarize_churn(filtered_data, "Geography")
+        ).sort_values("Geography")
         geography_chart = px.bar(
             country_summary, x="Geography", y="Churn_Rate", color="Churn_Rate",
             color_continuous_scale=[BLUE, ROSE], custom_data=["Customers", "Churned"],
@@ -741,6 +769,12 @@ else:
     segment_display["Churn rate"] = segment_display["Churn rate"].map(lambda rate: f"{rate:.1%}")
     segment_display["Churn contribution"] = segment_display["Churn contribution"].map(lambda share: f"{share:.1%}")
     st.dataframe(segment_display, hide_index=True, use_container_width=True)
+    st.download_button(
+        "Download segment summary (CSV)",
+        data=segment_summary.to_csv(index=False).encode("utf-8"),
+        file_name="filtered_segment_churn_summary.csv",
+        mime="text/csv",
+    )
 
     st.subheader("Drill into a segment")
     segment_values = filtered_data[selected_dimension].dropna().astype(str).unique().tolist()
@@ -750,9 +784,13 @@ else:
     cohort = filtered_data.loc[filtered_data[selected_dimension].astype(str).eq(selected_segment)]
     with drill_cols[1]:
         cohort_churn = float(cohort["Exited"].mean()) if len(cohort) else 0
+        active_churn = float(cohort.loc[cohort["IsActiveMember"].eq(1), "Exited"].mean()) if cohort["IsActiveMember"].eq(1).any() else float("nan")
+        inactive_churn = float(cohort.loc[cohort["IsActiveMember"].eq(0), "Exited"].mean()) if cohort["IsActiveMember"].eq(0).any() else float("nan")
+        engagement_gap = inactive_churn - active_churn if pd.notna(active_churn) and pd.notna(inactive_churn) else float("nan")
         median_balance = format_median(cohort["Balance"].median())
         median_salary = format_median(cohort["EstimatedSalary"].median())
-        st.caption(f"{len(cohort):,} customers · {int(cohort['Exited'].sum()):,} churned · {cohort_churn:.1%} churn rate · median balance {median_balance} · median estimated salary {median_salary} (source units)")
+        engagement_text = f"inactive vs active churn gap {engagement_gap:+.1%}" if pd.notna(engagement_gap) else "engagement gap unavailable"
+        st.caption(f"{len(cohort):,} customers · {int(cohort['Exited'].sum()):,} churned · {cohort_churn:.1%} churn rate · {engagement_text} · median balance {median_balance} · median estimated salary {median_salary} (source units)")
     geography_detail = summarize_churn(cohort, "Geography").rename(columns={"Geography": "Country", "Churn_Rate": "Churn rate"})
     geography_detail["Churn rate"] = geography_detail["Churn rate"].map(lambda rate: f"{rate:.1%}")
     st.dataframe(geography_detail, hide_index=True, use_container_width=True)
